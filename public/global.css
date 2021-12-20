@@ -61,3 +61,66 @@ button:not(:disabled):active {
 button:focus {
 	border-color: #666;
 }
+
+p {
+	max-width: 500px;
+	margin-bottom: 0;
+	line-height: 24px;
+	padding: 10px 20px;
+	border-radius: 25px;
+	position: relative;
+	color: white;
+	text-align: center;
+  }
+  
+  .message {
+	display: flex;
+	align-items: center;
+	margin: 0;
+	word-wrap:break-word;
+  }
+  
+  
+  .sent {
+	flex-direction: row-reverse;
+  }
+  
+  .sent p {
+	color: white;
+	background: #0b93f6;
+	align-self: flex-end;
+	text-align: right;
+  }
+  .received p {
+	background: #e5e5ea;
+	color: black;
+	text-align: left;
+  }
+
+  .message-text {
+	  display: flex;
+	  flex-direction: column;
+	  align-items: flex-end;
+  }
+
+  .received .message-text {
+	align-items: flex-start;
+}
+
+  time {
+	  color: white;
+	  font-size: 0.7rem;
+	  color: #9a9a9a;
+	  margin: 0 1rem;
+  }
+  
+  img {
+	width: 40px;
+	height: 40px;
+	border-radius: 50%;
+	margin: 2px 5px;
+  }
+
+  .message:last-child {
+	  margin-bottom: 20px;
+  }

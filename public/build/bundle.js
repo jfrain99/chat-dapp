@@ -24,6 +24,14 @@ var app = (function () {
     function safe_not_equal(a, b) {
         return a != a ? b == b : a !== b || ((a && typeof a === 'object') || typeof a === 'function');
     }
+    let src_url_equal_anchor;
+    function src_url_equal(element_src, url) {
+        if (!src_url_equal_anchor) {
+            src_url_equal_anchor = document.createElement('a');
+        }
+        src_url_equal_anchor.href = url;
+        return element_src === src_url_equal_anchor.href;
+    }
     function is_empty(obj) {
         return Object.keys(obj).length === 0;
     }
@@ -60,9 +68,19 @@ var app = (function () {
     function space() {
         return text(' ');
     }
+    function empty() {
+        return text('');
+    }
     function listen(node, event, handler, options) {
         node.addEventListener(event, handler, options);
         return () => node.removeEventListener(event, handler, options);
+    }
+    function prevent_default(fn) {
+        return function (event) {
+            event.preventDefault();
+            // @ts-ignore
+            return fn.call(this, event);
+        };
     }
     function attr(node, attribute, value) {
         if (value == null)
@@ -85,6 +103,14 @@ var app = (function () {
     let current_component;
     function set_current_component(component) {
         current_component = component;
+    }
+    function get_current_component() {
+        if (!current_component)
+            throw new Error('Function called outside component initialization');
+        return current_component;
+    }
+    function onMount(fn) {
+        get_current_component().$$.on_mount.push(fn);
     }
 
     const dirty_components = [];
@@ -211,6 +237,96 @@ var app = (function () {
         : typeof globalThis !== 'undefined'
             ? globalThis
             : global);
+    function outro_and_destroy_block(block, lookup) {
+        transition_out(block, 1, 1, () => {
+            lookup.delete(block.key);
+        });
+    }
+    function update_keyed_each(old_blocks, dirty, get_key, dynamic, ctx, list, lookup, node, destroy, create_each_block, next, get_context) {
+        let o = old_blocks.length;
+        let n = list.length;
+        let i = o;
+        const old_indexes = {};
+        while (i--)
+            old_indexes[old_blocks[i].key] = i;
+        const new_blocks = [];
+        const new_lookup = new Map();
+        const deltas = new Map();
+        i = n;
+        while (i--) {
+            const child_ctx = get_context(ctx, list, i);
+            const key = get_key(child_ctx);
+            let block = lookup.get(key);
+            if (!block) {
+                block = create_each_block(key, child_ctx);
+                block.c();
+            }
+            else if (dynamic) {
+                block.p(child_ctx, dirty);
+            }
+            new_lookup.set(key, new_blocks[i] = block);
+            if (key in old_indexes)
+                deltas.set(key, Math.abs(i - old_indexes[key]));
+        }
+        const will_move = new Set();
+        const did_move = new Set();
+        function insert(block) {
+            transition_in(block, 1);
+            block.m(node, next);
+            lookup.set(block.key, block);
+            next = block.first;
+            n--;
+        }
+        while (o && n) {
+            const new_block = new_blocks[n - 1];
+            const old_block = old_blocks[o - 1];
+            const new_key = new_block.key;
+            const old_key = old_block.key;
+            if (new_block === old_block) {
+                // do nothing
+                next = new_block.first;
+                o--;
+                n--;
+            }
+            else if (!new_lookup.has(old_key)) {
+                // remove old block
+                destroy(old_block, lookup);
+                o--;
+            }
+            else if (!lookup.has(new_key) || will_move.has(new_key)) {
+                insert(new_block);
+            }
+            else if (did_move.has(old_key)) {
+                o--;
+            }
+            else if (deltas.get(new_key) > deltas.get(old_key)) {
+                did_move.add(new_key);
+                insert(new_block);
+            }
+            else {
+                will_move.add(old_key);
+                o--;
+            }
+        }
+        while (o--) {
+            const old_block = old_blocks[o];
+            if (!new_lookup.has(old_block.key))
+                destroy(old_block, lookup);
+        }
+        while (n)
+            insert(new_blocks[n - 1]);
+        return new_blocks;
+    }
+    function validate_each_keys(ctx, list, get_context, get_key) {
+        const keys = new Set();
+        for (let i = 0; i < list.length; i++) {
+            const key = get_key(get_context(ctx, list, i));
+            if (keys.has(key)) {
+                throw new Error('Cannot have duplicate keys in a keyed each');
+            }
+            keys.add(key);
+        }
+    }
     function create_component(block) {
         block && block.c();
     }
@@ -375,12 +491,25 @@ var app = (function () {
         else
             dispatch_dev('SvelteDOMSetAttribute', { node, attribute, value });
     }
+    function prop_dev(node, property, value) {
+        node[property] = value;
+        dispatch_dev('SvelteDOMSetProperty', { node, property, value });
+    }
     function set_data_dev(text, data) {
         data = '' + data;
         if (text.wholeText === data)
             return;
         dispatch_dev('SvelteDOMSetData', { node: text, data });
         text.data = data;
+    }
+    function validate_each_argument(arg) {
+        if (typeof arg !== 'string' && !(arg && typeof arg === 'object' && 'length' in arg)) {
+            let msg = '{#each} only iterates over array-like objects.';
+            if (typeof Symbol === 'function' && arg && Symbol.iterator in arg) {
+                msg += ' You can use a spread to convert this iterable into an array.';
+            }
+            throw new Error(msg);
+        }
     }
     function validate_slots(name, slot, keys) {
         for (const slot_key of Object.keys(slot)) {
@@ -4199,9 +4328,9 @@ var app = (function () {
     /* src/Header.svelte generated by Svelte v3.44.3 */
 
     const { console: console_1 } = globals;
-    const file$3 = "src/Header.svelte";
+    const file$4 = "src/Header.svelte";
 
-    // (18:4) {:else}
+    // (19:4) {:else}
     function create_else_block$1(ctx) {
     	let h1;
 
@@ -4209,7 +4338,7 @@ var app = (function () {
     		c: function create() {
     			h1 = element("h1");
     			h1.textContent = "Gunjs Chat";
-    			add_location(h1, file$3, 18, 8, 381);
+    			add_location(h1, file$4, 19, 8, 379);
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, h1, anchor);
@@ -4224,44 +4353,51 @@ var app = (function () {
     		block,
     		id: create_else_block$1.name,
     		type: "else",
-    		source: "(18:4) {:else}",
+    		source: "(19:4) {:else}",
     		ctx
     	});
 
     	return block;
     }
 
-    // (13:4) {#if $username}
+    // (12:4) {#if $username}
     function create_if_block$1(ctx) {
+    	let box;
     	let span;
     	let t0;
     	let strong;
     	let t1;
     	let t2;
+    	let t3;
     	let button;
     	let mounted;
     	let dispose;
 
     	const block = {
     		c: function create() {
+    			box = element("box");
     			span = element("span");
     			t0 = text("Hello ");
     			strong = element("strong");
     			t1 = text(/*$username*/ ctx[0]);
-    			t2 = space();
+    			t2 = text("!");
+    			t3 = space();
     			button = element("button");
     			button.textContent = "Log out";
-    			add_location(strong, file$3, 13, 21, 252);
-    			add_location(span, file$3, 13, 8, 239);
-    			add_location(button, file$3, 14, 8, 296);
+    			add_location(strong, file$4, 13, 21, 238);
+    			add_location(span, file$4, 13, 8, 225);
+    			add_location(button, file$4, 14, 8, 283);
+    			add_location(box, file$4, 12, 4, 211);
     		},
     		m: function mount(target, anchor) {
-    			insert_dev(target, span, anchor);
+    			insert_dev(target, box, anchor);
+    			append_dev(box, span);
     			append_dev(span, t0);
     			append_dev(span, strong);
     			append_dev(strong, t1);
-    			insert_dev(target, t2, anchor);
-    			insert_dev(target, button, anchor);
+    			append_dev(span, t2);
+    			append_dev(box, t3);
+    			append_dev(box, button);
 
     			if (!mounted) {
     				dispose = listen_dev(button, "click", /*logout*/ ctx[1], false, false, false);
@@ -4272,9 +4408,7 @@ var app = (function () {
     			if (dirty & /*$username*/ 1) set_data_dev(t1, /*$username*/ ctx[0]);
     		},
     		d: function destroy(detaching) {
-    			if (detaching) detach_dev(span);
-    			if (detaching) detach_dev(t2);
-    			if (detaching) detach_dev(button);
+    			if (detaching) detach_dev(box);
     			mounted = false;
     			dispose();
     		}
@@ -4284,17 +4418,15 @@ var app = (function () {
     		block,
     		id: create_if_block$1.name,
     		type: "if",
-    		source: "(13:4) {#if $username}",
+    		source: "(12:4) {#if $username}",
     		ctx
     	});
 
     	return block;
     }
 
-    function create_fragment$3(ctx) {
+    function create_fragment$4(ctx) {
     	let header;
-    	let h1;
-    	let t1;
 
     	function select_block_type(ctx, dirty) {
     		if (/*$username*/ ctx[0]) return create_if_block$1;
@@ -4307,20 +4439,14 @@ var app = (function () {
     	const block = {
     		c: function create() {
     			header = element("header");
-    			h1 = element("h1");
-    			h1.textContent = "Jack Frain";
-    			t1 = space();
     			if_block.c();
-    			add_location(h1, file$3, 11, 4, 191);
-    			add_location(header, file$3, 10, 0, 178);
+    			add_location(header, file$4, 10, 0, 178);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, header, anchor);
-    			append_dev(header, h1);
-    			append_dev(header, t1);
     			if_block.m(header, null);
     		},
     		p: function update(ctx, [dirty]) {
@@ -4346,7 +4472,7 @@ var app = (function () {
 
     	dispatch_dev("SvelteRegisterBlock", {
     		block,
-    		id: create_fragment$3.name,
+    		id: create_fragment$4.name,
     		type: "component",
     		source: "",
     		ctx
@@ -4355,7 +4481,7 @@ var app = (function () {
     	return block;
     }
 
-    function instance$3($$self, $$props, $$invalidate) {
+    function instance$4($$self, $$props, $$invalidate) {
     	let $username;
     	validate_store(username, 'username');
     	component_subscribe($$self, username, $$value => $$invalidate(0, $username = $$value));
@@ -4381,14 +4507,165 @@ var app = (function () {
     class Header extends SvelteComponentDev {
     	constructor(options) {
     		super(options);
-    		init(this, options, instance$3, create_fragment$3, safe_not_equal, {});
+    		init(this, options, instance$4, create_fragment$4, safe_not_equal, {});
 
     		dispatch_dev("SvelteRegisterComponent", {
     			component: this,
     			tagName: "Header",
     			options,
+    			id: create_fragment$4.name
+    		});
+    	}
+    }
+
+    /* src/Message.svelte generated by Svelte v3.44.3 */
+
+    const file$3 = "src/Message.svelte";
+
+    function create_fragment$3(ctx) {
+    	let div1;
+    	let img;
+    	let img_src_value;
+    	let t0;
+    	let div0;
+    	let p;
+    	let t1_value = /*message*/ ctx[0].what + "";
+    	let t1;
+    	let t2;
+    	let time;
+
+    	const block = {
+    		c: function create() {
+    			div1 = element("div");
+    			img = element("img");
+    			t0 = space();
+    			div0 = element("div");
+    			p = element("p");
+    			t1 = text(t1_value);
+    			t2 = space();
+    			time = element("time");
+    			time.textContent = `${/*ts*/ ctx[3].toLocaleTimeString()}`;
+    			if (!src_url_equal(img.src, img_src_value = /*avatar*/ ctx[2])) attr_dev(img, "src", img_src_value);
+    			attr_dev(img, "alt", "avatar");
+    			add_location(img, file$3, 9, 4, 310);
+    			add_location(p, file$3, 11, 6, 381);
+    			add_location(time, file$3, 13, 6, 412);
+    			attr_dev(div0, "class", "message-text");
+    			add_location(div0, file$3, 10, 4, 348);
+    			attr_dev(div1, "class", `message ${/*messageClass*/ ctx[1]}`);
+    			add_location(div1, file$3, 8, 2, 266);
+    		},
+    		l: function claim(nodes) {
+    			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
+    		},
+    		m: function mount(target, anchor) {
+    			insert_dev(target, div1, anchor);
+    			append_dev(div1, img);
+    			append_dev(div1, t0);
+    			append_dev(div1, div0);
+    			append_dev(div0, p);
+    			append_dev(p, t1);
+    			append_dev(div0, t2);
+    			append_dev(div0, time);
+    		},
+    		p: function update(ctx, [dirty]) {
+    			if (dirty & /*message*/ 1 && t1_value !== (t1_value = /*message*/ ctx[0].what + "")) set_data_dev(t1, t1_value);
+    		},
+    		i: noop,
+    		o: noop,
+    		d: function destroy(detaching) {
+    			if (detaching) detach_dev(div1);
+    		}
+    	};
+
+    	dispatch_dev("SvelteRegisterBlock", {
+    		block,
+    		id: create_fragment$3.name,
+    		type: "component",
+    		source: "",
+    		ctx
+    	});
+
+    	return block;
+    }
+
+    function instance$3($$self, $$props, $$invalidate) {
+    	let { $$slots: slots = {}, $$scope } = $$props;
+    	validate_slots('Message', slots, []);
+    	let { message } = $$props;
+    	let { sender } = $$props;
+    	const messageClass = message.who === sender ? 'sent' : 'received';
+    	const avatar = `https://avatars.dicebear.com/api/initials/${message.who}.svg`;
+    	const ts = new Date(message.when);
+    	const writable_props = ['message', 'sender'];
+
+    	Object.keys($$props).forEach(key => {
+    		if (!~writable_props.indexOf(key) && key.slice(0, 2) !== '$$' && key !== 'slot') console.warn(`<Message> was created with unknown prop '${key}'`);
+    	});
+
+    	$$self.$$set = $$props => {
+    		if ('message' in $$props) $$invalidate(0, message = $$props.message);
+    		if ('sender' in $$props) $$invalidate(4, sender = $$props.sender);
+    	};
+
+    	$$self.$capture_state = () => ({
+    		message,
+    		sender,
+    		messageClass,
+    		avatar,
+    		ts
+    	});
+
+    	$$self.$inject_state = $$props => {
+    		if ('message' in $$props) $$invalidate(0, message = $$props.message);
+    		if ('sender' in $$props) $$invalidate(4, sender = $$props.sender);
+    	};
+
+    	if ($$props && "$$inject" in $$props) {
+    		$$self.$inject_state($$props.$$inject);
+    	}
+
+    	return [message, messageClass, avatar, ts, sender];
+    }
+
+    class Message extends SvelteComponentDev {
+    	constructor(options) {
+    		super(options);
+    		init(this, options, instance$3, create_fragment$3, safe_not_equal, { message: 0, sender: 4 });
+
+    		dispatch_dev("SvelteRegisterComponent", {
+    			component: this,
+    			tagName: "Message",
+    			options,
     			id: create_fragment$3.name
     		});
+
+    		const { ctx } = this.$$;
+    		const props = options.props || {};
+
+    		if (/*message*/ ctx[0] === undefined && !('message' in props)) {
+    			console.warn("<Message> was created without expected prop 'message'");
+    		}
+
+    		if (/*sender*/ ctx[4] === undefined && !('sender' in props)) {
+    			console.warn("<Message> was created without expected prop 'sender'");
+    		}
+    	}
+
+    	get message() {
+    		throw new Error("<Message>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
+
+    	set message(value) {
+    		throw new Error("<Message>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
+
+    	get sender() {
+    		throw new Error("<Message>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
+
+    	set sender(value) {
+    		throw new Error("<Message>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
     	}
     }
 
@@ -4576,7 +4853,13 @@ var app = (function () {
     /* src/Chat.svelte generated by Svelte v3.44.3 */
     const file$1 = "src/Chat.svelte";
 
-    // (9:4) {:else}
+    function get_each_context(ctx, list, i) {
+    	const child_ctx = ctx.slice();
+    	child_ctx[6] = list[i];
+    	return child_ctx;
+    }
+
+    // (52:4) {:else}
     function create_else_block(ctx) {
     	let login;
     	let current;
@@ -4590,6 +4873,7 @@ var app = (function () {
     			mount_component(login, target, anchor);
     			current = true;
     		},
+    		p: noop,
     		i: function intro(local) {
     			if (current) return;
     			transition_in(login.$$.fragment, local);
@@ -4608,30 +4892,125 @@ var app = (function () {
     		block,
     		id: create_else_block.name,
     		type: "else",
-    		source: "(9:4) {:else}",
+    		source: "(52:4) {:else}",
     		ctx
     	});
 
     	return block;
     }
 
-    // (7:4) {#if $username}
+    // (44:4) {#if $username}
     function create_if_block(ctx) {
-    	let h1;
+    	let each_blocks = [];
+    	let each_1_lookup = new Map();
+    	let t0;
+    	let form;
+    	let input;
+    	let t1;
+    	let button;
+    	let t2;
+    	let button_disabled_value;
+    	let current;
+    	let mounted;
+    	let dispose;
+    	let each_value = /*messages*/ ctx[1];
+    	validate_each_argument(each_value);
+    	const get_key = ctx => /*message*/ ctx[6].when;
+    	validate_each_keys(ctx, each_value, get_each_context, get_key);
+
+    	for (let i = 0; i < each_value.length; i += 1) {
+    		let child_ctx = get_each_context(ctx, each_value, i);
+    		let key = get_key(child_ctx);
+    		each_1_lookup.set(key, each_blocks[i] = create_each_block(key, child_ctx));
+    	}
 
     	const block = {
     		c: function create() {
-    			h1 = element("h1");
-    			h1.textContent = "Logged in";
-    			add_location(h1, file$1, 7, 8, 131);
+    			for (let i = 0; i < each_blocks.length; i += 1) {
+    				each_blocks[i].c();
+    			}
+
+    			t0 = space();
+    			form = element("form");
+    			input = element("input");
+    			t1 = space();
+    			button = element("button");
+    			t2 = text("Send");
+    			attr_dev(input, "type", "text");
+    			attr_dev(input, "placeholder", "Type a message...");
+    			attr_dev(input, "maxlength", "100");
+    			add_location(input, file$1, 48, 12, 1326);
+    			attr_dev(button, "type", "submit");
+    			button.disabled = button_disabled_value = !/*newMessage*/ ctx[0];
+    			add_location(button, file$1, 49, 12, 1432);
+    			add_location(form, file$1, 47, 8, 1268);
     		},
     		m: function mount(target, anchor) {
-    			insert_dev(target, h1, anchor);
+    			for (let i = 0; i < each_blocks.length; i += 1) {
+    				each_blocks[i].m(target, anchor);
+    			}
+
+    			insert_dev(target, t0, anchor);
+    			insert_dev(target, form, anchor);
+    			append_dev(form, input);
+    			set_input_value(input, /*newMessage*/ ctx[0]);
+    			append_dev(form, t1);
+    			append_dev(form, button);
+    			append_dev(button, t2);
+    			current = true;
+
+    			if (!mounted) {
+    				dispose = [
+    					listen_dev(input, "input", /*input_input_handler*/ ctx[4]),
+    					listen_dev(form, "submit", prevent_default(/*sendMessage*/ ctx[3]), false, true, false)
+    				];
+
+    				mounted = true;
+    			}
     		},
-    		i: noop,
-    		o: noop,
+    		p: function update(ctx, dirty) {
+    			if (dirty & /*messages, $username*/ 6) {
+    				each_value = /*messages*/ ctx[1];
+    				validate_each_argument(each_value);
+    				group_outros();
+    				validate_each_keys(ctx, each_value, get_each_context, get_key);
+    				each_blocks = update_keyed_each(each_blocks, dirty, get_key, 1, ctx, each_value, each_1_lookup, t0.parentNode, outro_and_destroy_block, create_each_block, t0, get_each_context);
+    				check_outros();
+    			}
+
+    			if (dirty & /*newMessage*/ 1 && input.value !== /*newMessage*/ ctx[0]) {
+    				set_input_value(input, /*newMessage*/ ctx[0]);
+    			}
+
+    			if (!current || dirty & /*newMessage*/ 1 && button_disabled_value !== (button_disabled_value = !/*newMessage*/ ctx[0])) {
+    				prop_dev(button, "disabled", button_disabled_value);
+    			}
+    		},
+    		i: function intro(local) {
+    			if (current) return;
+
+    			for (let i = 0; i < each_value.length; i += 1) {
+    				transition_in(each_blocks[i]);
+    			}
+
+    			current = true;
+    		},
+    		o: function outro(local) {
+    			for (let i = 0; i < each_blocks.length; i += 1) {
+    				transition_out(each_blocks[i]);
+    			}
+
+    			current = false;
+    		},
     		d: function destroy(detaching) {
-    			if (detaching) detach_dev(h1);
+    			for (let i = 0; i < each_blocks.length; i += 1) {
+    				each_blocks[i].d(detaching);
+    			}
+
+    			if (detaching) detach_dev(t0);
+    			if (detaching) detach_dev(form);
+    			mounted = false;
+    			run_all(dispose);
     		}
     	};
 
@@ -4639,7 +5018,67 @@ var app = (function () {
     		block,
     		id: create_if_block.name,
     		type: "if",
-    		source: "(7:4) {#if $username}",
+    		source: "(44:4) {#if $username}",
+    		ctx
+    	});
+
+    	return block;
+    }
+
+    // (45:8) {#each messages as message (message.when)}
+    function create_each_block(key_1, ctx) {
+    	let first;
+    	let message;
+    	let current;
+
+    	message = new Message({
+    			props: {
+    				message: /*message*/ ctx[6],
+    				sender: /*$username*/ ctx[2]
+    			},
+    			$$inline: true
+    		});
+
+    	const block = {
+    		key: key_1,
+    		first: null,
+    		c: function create() {
+    			first = empty();
+    			create_component(message.$$.fragment);
+    			this.first = first;
+    		},
+    		m: function mount(target, anchor) {
+    			insert_dev(target, first, anchor);
+    			mount_component(message, target, anchor);
+    			current = true;
+    		},
+    		p: function update(new_ctx, dirty) {
+    			ctx = new_ctx;
+    			const message_changes = {};
+    			if (dirty & /*messages*/ 2) message_changes.message = /*message*/ ctx[6];
+    			if (dirty & /*$username*/ 4) message_changes.sender = /*$username*/ ctx[2];
+    			message.$set(message_changes);
+    		},
+    		i: function intro(local) {
+    			if (current) return;
+    			transition_in(message.$$.fragment, local);
+    			current = true;
+    		},
+    		o: function outro(local) {
+    			transition_out(message.$$.fragment, local);
+    			current = false;
+    		},
+    		d: function destroy(detaching) {
+    			if (detaching) detach_dev(first);
+    			destroy_component(message, detaching);
+    		}
+    	};
+
+    	dispatch_dev("SvelteRegisterBlock", {
+    		block,
+    		id: create_each_block.name,
+    		type: "each",
+    		source: "(45:8) {#each messages as message (message.when)}",
     		ctx
     	});
 
@@ -4655,7 +5094,7 @@ var app = (function () {
     	const if_blocks = [];
 
     	function select_block_type(ctx, dirty) {
-    		if (/*$username*/ ctx[0]) return 0;
+    		if (/*$username*/ ctx[2]) return 0;
     		return 1;
     	}
 
@@ -4666,7 +5105,7 @@ var app = (function () {
     		c: function create() {
     			div = element("div");
     			if_block.c();
-    			add_location(div, file$1, 5, 0, 97);
+    			add_location(div, file$1, 42, 0, 1106);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -4680,7 +5119,9 @@ var app = (function () {
     			let previous_block_index = current_block_type_index;
     			current_block_type_index = select_block_type(ctx);
 
-    			if (current_block_type_index !== previous_block_index) {
+    			if (current_block_type_index === previous_block_index) {
+    				if_blocks[current_block_type_index].p(ctx, dirty);
+    			} else {
     				group_outros();
 
     				transition_out(if_blocks[previous_block_index], 1, 1, () => {
@@ -4693,6 +5134,8 @@ var app = (function () {
     				if (!if_block) {
     					if_block = if_blocks[current_block_type_index] = if_block_creators[current_block_type_index](ctx);
     					if_block.c();
+    				} else {
+    					if_block.p(ctx, dirty);
     				}
 
     				transition_in(if_block, 1);
@@ -4728,17 +5171,74 @@ var app = (function () {
     function instance$1($$self, $$props, $$invalidate) {
     	let $username;
     	validate_store(username, 'username');
-    	component_subscribe($$self, username, $$value => $$invalidate(0, $username = $$value));
+    	component_subscribe($$self, username, $$value => $$invalidate(2, $username = $$value));
     	let { $$slots: slots = {}, $$scope } = $$props;
     	validate_slots('Chat', slots, []);
+    	const db = browser();
+    	let newMessage;
+    	let messages = [];
+
+    	onMount(() => {
+    		db.get('chat').map().once(async (data, id) => {
+    			if (data) {
+    				const key = "#jack";
+
+    				var message = {
+    					who: await db.user(data).get('alias'),
+    					what: await SEA.decrypt(data.what, key) + '',
+    					when: browser.state.is(data, 'what')
+    				};
+
+    				if (message.what) {
+    					$$invalidate(1, messages = [...messages.slice(-100), message]);
+    				}
+    			}
+    		});
+    	});
+
+    	async function sendMessage() {
+    		const secret = await SEA.encrypt(newMessage, "#jack");
+    		const message = user.get('all').set({ what: secret });
+    		const index = new Date().toISOString();
+    		db.get('chat').get(index).put(message);
+    		$$invalidate(0, newMessage = '');
+    	}
+
     	const writable_props = [];
 
     	Object.keys($$props).forEach(key => {
     		if (!~writable_props.indexOf(key) && key.slice(0, 2) !== '$$' && key !== 'slot') console.warn(`<Chat> was created with unknown prop '${key}'`);
     	});
 
-    	$$self.$capture_state = () => ({ Login, username, $username });
-    	return [$username];
+    	function input_input_handler() {
+    		newMessage = this.value;
+    		$$invalidate(0, newMessage);
+    	}
+
+    	$$self.$capture_state = () => ({
+    		Message,
+    		Login,
+    		username,
+    		user,
+    		GUN: browser,
+    		onMount,
+    		db,
+    		newMessage,
+    		messages,
+    		sendMessage,
+    		$username
+    	});
+
+    	$$self.$inject_state = $$props => {
+    		if ('newMessage' in $$props) $$invalidate(0, newMessage = $$props.newMessage);
+    		if ('messages' in $$props) $$invalidate(1, messages = $$props.messages);
+    	};
+
+    	if ($$props && "$$inject" in $$props) {
+    		$$self.$inject_state($$props.$$inject);
+    	}
+
+    	return [newMessage, messages, $username, sendMessage, input_input_handler];
     }
 
     class Chat extends SvelteComponentDev {
@@ -4854,9 +5354,7 @@ var app = (function () {
 
     const app = new App({
     	target: document.body,
-    	props: {
-    		name: 'Jack'
-    	}
+
     });
 
     return app;
